@@ -1,4 +1,5 @@
 importScripts('assets/vendor/workbox-7.3.0/workbox-sw.js');
+importScripts('assets/vendor/dexie/dexie.min.js');
 
 workbox.setConfig({
   debug: false,
@@ -34,3 +35,56 @@ workbox.precaching.precacheAndRoute([
 ], {
   ignoreURLParametersMatching: [/.*/]
 });
+
+// Add background sync handler
+self.addEventListener('sync', function(event) {
+  if (event.tag === 'sync-locations') {
+    event.waitUntil(syncPendingLocations());
+  }
+});
+
+// Add periodic sync handler
+self.addEventListener('periodicsync', function(event) {
+  if (event.tag === 'sync-locations') {
+    event.waitUntil(syncPendingLocations());
+  }
+});
+
+// Function to sync pending locations
+async function syncPendingLocations() {
+  const db = new Dexie('TeamWorkersDB');
+  db.version(1).stores({
+    pendingUpdates: '++id, workerId, latitude, longitude, timestamp, synced'
+  });
+
+  try {
+    const pendingUpdates = await db.pendingUpdates
+      .where('synced')
+      .equals(0)
+      .toArray();
+
+    for (const update of pendingUpdates) {
+      try {
+        const response = await fetch('api/locations/update.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            workerId: update.workerId,
+            latitude: update.latitude,
+            longitude: update.longitude
+          })
+        });
+
+        if (response.ok) {
+          await db.pendingUpdates.update(update.id, { synced: 1 });
+        }
+      } catch (error) {
+        console.error('Error syncing location:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error in sync process:', error);
+  }
+}

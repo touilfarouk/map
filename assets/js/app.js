@@ -18,7 +18,8 @@ const db = new Dexie('TeamWorkersDB');
 
 // Define database
 db.version(1).stores({
-  workers: '++id, workerId, name, email, timestamp, lastLocation'
+  workers: '++id, workerId, name, email, timestamp, lastLocation',
+  pendingUpdates: '++id, workerId, latitude, longitude, timestamp, synced'
 });
 
 // Define controls first
@@ -144,6 +145,13 @@ function initMap() {
     initControls();
 
     console.log("Map initialization complete");
+
+    // Load initial workers
+    loadAllWorkers();
+
+    // Refresh workers every 30 seconds
+    setInterval(loadAllWorkers, 30000);
+
     return true;
   } catch (error) {
     console.error("Error initializing map:", error);
@@ -748,7 +756,7 @@ function locateWorker(workerId) {
   }
 }
 
-// Update handleRegistration function
+// Replace the handleRegistration function
 async function handleRegistration(event) {
   event.preventDefault();
   
@@ -760,11 +768,16 @@ async function handleRegistration(event) {
   };
 
   try {
-    // Store in IndexedDB
-    await db.workers.put({
-      ...workerData,
-      lastLocation: null
+    // Register worker with API
+    const response = await fetch('api/workers/create.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(workerData)
     });
+
+    if (!response.ok) throw new Error('Registration failed');
 
     // Store worker data in memory
     currentWorker = workerData;
@@ -796,34 +809,21 @@ async function handleRegistration(event) {
         `)
     });
 
-    // Update location in database
-    await db.workers.where('workerId').equals(workerData.workerId).modify({
-      lastLocation: position,
-      timestamp: Date.now()
-    });
-
-    // Update worker position when location changes
-    map.on('locationfound', async function(e) {
-      if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
-        const worker = teamWorkers.get(currentWorker.workerId);
-        worker.marker.setLatLng(e.latlng);
-        worker.marker.getPopup().setContent(`
-          <strong>${worker.name}</strong><br>
-          Worker ID: ${worker.workerId}<br>
-          Last Updated: ${new Date().toLocaleTimeString()}
-        `);
-
-        // Update location in database
-        await db.workers.where('workerId').equals(currentWorker.workerId).modify({
-          lastLocation: e.latlng,
-          timestamp: Date.now()
-        });
-      }
+    // Update location in API
+    await fetch('api/locations/update.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workerId: workerData.workerId,
+        latitude: position.lat,
+        longitude: position.lng
+      })
     });
 
     closeRegistrationForm();
     
-    // Show success message
     await Swal.fire({
       icon: "success",
       text: "Successfully registered as team worker!",
@@ -852,12 +852,14 @@ async function handleRegistration(event) {
   }
 }
 
-// Add function to load saved workers on startup
-async function loadSavedWorkers() {
+// Add function to periodically fetch all workers
+async function loadAllWorkers() {
   try {
-    const workers = await db.workers.toArray();
+    const response = await fetch('api/workers/get_all.php');
+    const workers = await response.json();
+
     workers.forEach(worker => {
-      if (worker.lastLocation) {
+      if (worker.lastLocation && !teamWorkers.has(worker.workerId)) {
         const workerMarker = L.divIcon({
           className: 'team-worker-marker',
           html: `<div style="padding: 5px;">${worker.name.charAt(0)}</div>`,
@@ -876,12 +878,104 @@ async function loadSavedWorkers() {
       }
     });
   } catch (error) {
-    console.error('Error loading saved workers:', error);
+    console.error('Error loading workers:', error);
   }
 }
 
-// Add this to your initMap function after map initialization
-loadSavedWorkers();
+// Add this function for background sync
+async function syncPendingLocations() {
+  try {
+    // Get all unsynced location updates
+    const pendingUpdates = await db.pendingUpdates
+      .where('synced')
+      .equals(0)
+      .toArray();
+
+    for (const update of pendingUpdates) {
+      try {
+        const response = await fetch('api/locations/update.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            workerId: update.workerId,
+            latitude: update.latitude,
+            longitude: update.longitude
+          })
+        });
+
+        if (response.ok) {
+          // Mark as synced in Dexie
+          await db.pendingUpdates.update(update.id, { synced: 1 });
+        }
+      } catch (error) {
+        console.error('Error syncing location:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error in sync process:', error);
+  }
+}
+
+// Update the location tracking function
+map.on('locationfound', async function(e) {
+  if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
+    const worker = teamWorkers.get(currentWorker.workerId);
+    worker.marker.setLatLng(e.latlng);
+    worker.marker.getPopup().setContent(`
+      <strong>${worker.name}</strong><br>
+      Worker ID: ${worker.workerId}<br>
+      Last Updated: ${new Date().toLocaleTimeString()}
+    `);
+
+    // Store location update in Dexie
+    try {
+      await db.pendingUpdates.add({
+        workerId: currentWorker.workerId,
+        latitude: e.latlng.lat,
+        longitude: e.latlng.lng,
+        timestamp: Date.now(),
+        synced: 0
+      });
+
+      // Try to sync if online
+      if (navigator.onLine) {
+        syncPendingLocations();
+      }
+    } catch (error) {
+      console.error('Error storing location:', error);
+    }
+  }
+});
+
+// Add background sync using Service Worker
+async function registerBackgroundSync() {
+  try {
+    if ('serviceWorker' in navigator && 'SyncManager' in window) {
+      const registration = await navigator.serviceWorker.ready;
+      
+      // Register periodic sync if supported
+      if ('periodicSync' in registration) {
+        try {
+          await registration.periodicSync.register('sync-locations', {
+            minInterval: 60000 // Minimum 1 minute
+          });
+        } catch (error) {
+          console.log('Periodic sync could not be registered:', error);
+        }
+      }
+
+      // Register regular background sync
+      await registration.sync.register('sync-locations');
+    }
+  } catch (error) {
+    console.error('Error registering background sync:', error);
+  }
+}
+
+// Initialize background sync when the app starts
+registerBackgroundSync();
 
 // Add event listener for form submission
 document.addEventListener('DOMContentLoaded', () => {
@@ -893,3 +987,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// Add this function to clean up old synced records
+async function cleanupSyncedRecords() {
+  try {
+    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    await db.pendingUpdates
+      .where('synced')
+      .equals(1)
+      .and(item => item.timestamp < oneWeekAgo)
+      .delete();
+  } catch (error) {
+    console.error('Error cleaning up old records:', error);
+  }
+}
+
+// Run cleanup daily
+setInterval(cleanupSyncedRecords, 24 * 60 * 60 * 1000);
