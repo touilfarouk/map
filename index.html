@@ -40,12 +40,78 @@
         z-index: 1000;
         display: none;
       }
+      .modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        z-index: 1000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      
+      .modal-content {
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+        max-width: 400px;
+        width: 90%;
+      }
+      
+      #registration-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+      }
+      
+      #registration-form input[type="text"],
+      #registration-form input[type="email"] {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      
+      .form-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+      
+      .team-worker-marker {
+        background-color: #3388ff;
+        border: 2px solid white;
+        border-radius: 50%;
+        text-align: center;
+        color: white;
+        font-weight: bold;
+      }
     </style>
   </head>
   <body>
     <main id="map">
       <div class="progress" id="progress-bar">
         <div class="indeterminate"></div>
+      </div>
+      <div id="registration-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+          <h2>Team Worker Registration</h2>
+          <form id="registration-form">
+            <input type="text" id="worker-name" placeholder="Full Name" required>
+            <input type="email" id="worker-email" placeholder="Email" required>
+            <input type="text" id="worker-id" placeholder="Worker ID" required>
+            <label>
+              <input type="checkbox" id="location-consent" required>
+              I consent to sharing my location while on duty
+            </label>
+            <div class="form-buttons">
+              <button type="submit">Register</button>
+              <button type="button" onclick="closeRegistrationForm()">Cancel</button>
+            </div>
+          </form>
+        </div>
       </div>
     </main>
     <script src="assets/vendor/localForage-1.10.0/localforage.min.js"></script>

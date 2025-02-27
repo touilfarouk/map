@@ -10,6 +10,8 @@ const mapStore = localforage.createInstance({
 let layers = {};
 let map; // Global map variable
 const controls = {}; // Add global controls object
+const teamWorkers = new Map(); // Store worker info and markers
+let currentWorker = null; // Store current worker's info
 
 // Define controls first
 // Add file control
@@ -229,6 +231,22 @@ function initControls() {
   controls.savemapCtrl = L.control.savemap({
     position: "topleft"
   });
+
+  controls.registerCtrl = L.control({
+    position: "topleft"
+  });
+
+  controls.registerCtrl.onAdd = function(map) {
+    const div = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+    div.innerHTML = `
+      <a class="leaflet-bar-part leaflet-bar-part-single" title="Register as Team Worker" onclick="showRegistrationForm()">
+        <i class="icon-person_add"></i>
+      </a>
+    `;
+    return div;
+  };
+
+  controls.registerCtrl.addTo(map);
 }
 
 // Initialize map immediately when script loads, don't wait for DOMContentLoaded
@@ -687,4 +705,76 @@ window.addEventListener("offline", (e) => {
 window.addEventListener("online", (e) => {
   document.getElementById("status-indicator").style.color = "green";
   document.getElementById("status-msg").innerHTML = "online";
+});
+
+// Add these functions for handling registration
+function showRegistrationForm() {
+  document.getElementById("registration-modal").style.display = "flex";
+}
+
+function closeRegistrationForm() {
+  document.getElementById("registration-modal").style.display = "none";
+}
+
+function handleRegistration(event) {
+  event.preventDefault();
+  
+  const workerData = {
+    name: document.getElementById("worker-name").value,
+    email: document.getElementById("worker-email").value,
+    workerId: document.getElementById("worker-id").value,
+    timestamp: Date.now()
+  };
+
+  // Store worker data
+  currentWorker = workerData;
+  
+  // Create a marker for the worker
+  const workerMarker = L.divIcon({
+    className: 'team-worker-marker',
+    html: `<div style="padding: 5px;">${workerData.name.charAt(0)}</div>`,
+    iconSize: [30, 30]
+  });
+
+  // Add worker to the map if location is available
+  if (controls.locateCtrl._active) {
+    const pos = controls.locateCtrl._marker.getLatLng();
+    teamWorkers.set(workerData.workerId, {
+      ...workerData,
+      marker: L.marker(pos, {icon: workerMarker}).addTo(map)
+        .bindPopup(`
+          <strong>${workerData.name}</strong><br>
+          Worker ID: ${workerData.workerId}<br>
+          Last Updated: ${new Date().toLocaleTimeString()}
+        `)
+    });
+  }
+
+  // Update worker position when location changes
+  map.on('locationfound', function(e) {
+    if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
+      const worker = teamWorkers.get(currentWorker.workerId);
+      worker.marker.setLatLng(e.latlng);
+      worker.marker.getPopup().setContent(`
+        <strong>${worker.name}</strong><br>
+        Worker ID: ${worker.workerId}<br>
+        Last Updated: ${new Date().toLocaleTimeString()}
+      `);
+    }
+  });
+
+  closeRegistrationForm();
+  Swal.fire({
+    icon: "success",
+    text: "Successfully registered as team worker!",
+    toast: true,
+    timer: 3000,
+    position: "top-end",
+    showConfirmButton: false
+  });
+}
+
+// Add event listener for form submission
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('registration-form').addEventListener('submit', handleRegistration);
 });
