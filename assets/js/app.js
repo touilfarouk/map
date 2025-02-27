@@ -151,8 +151,16 @@ function initMap() {
     // Load initial workers
     loadAllWorkers();
 
-    // Refresh workers every 30 seconds
-    setInterval(loadAllWorkers, 30000);
+    // Refresh workers more frequently (every 5 seconds instead of 30)
+    setInterval(loadAllWorkers, 5000);
+
+    // Add movement accuracy options to location control
+    controls.locateCtrl.options.locateOptions = {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 5000,
+      watch: true  // Continuously watch position
+    };
 
     console.log("Map initialization complete");
     return true;
