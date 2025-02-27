@@ -270,3 +270,25 @@ th, td {
     right: -8%;
   }
 }
+.worker-marker-circle {
+  animation: worker-pulse 2s infinite;
+}
+
+@keyframes worker-pulse {
+  0% {
+    stroke-opacity: 1;
+    stroke-width: 3;
+  }
+  100% {
+    stroke-opacity: 0;
+    stroke-width: 10;
+    transform: scale(2);
+  }
+}
+
+.worker-marker-inner {
+  stroke: #fff;
+  stroke-width: 3;
+  fill: #2A93EE;
+  fill-opacity: 1;
+}

@@ -767,7 +767,37 @@ function locateWorker(workerId) {
   }
 }
 
-// Replace the handleRegistration function
+// Update the marker creation code
+function createWorkerMarker(worker, position) {
+  const markerHtml = `
+    <svg width="40" height="40" viewBox="-20 -20 40 40">
+      <circle class="worker-marker-circle" r="9" 
+        style="stroke:#fff;stroke-width:3;fill:#2A93EE;fill-opacity:0.3;"/>
+      <circle class="worker-marker-inner" r="9"/>
+      <text text-anchor="middle" y="2" 
+        style="font-size: 12px; fill: white; font-weight: bold;">
+        ${worker.name.charAt(0)}
+      </text>
+    </svg>
+  `;
+
+  const markerIcon = L.divIcon({
+    className: 'worker-marker',
+    html: markerHtml,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20]
+  });
+
+  return L.marker(position, {
+    icon: markerIcon
+  }).bindPopup(`
+    <strong>${worker.name}</strong><br>
+    Worker ID: ${worker.workerId}<br>
+    Last Updated: ${formatLastSeen(worker.timestamp)}
+  `);
+}
+
+// Update handleRegistration to use the new marker
 async function handleRegistration(event) {
   event.preventDefault();
   
@@ -831,20 +861,12 @@ async function handleRegistration(event) {
     // Continue with local operations
     currentWorker = workerData;
     
-    const workerMarker = L.divIcon({
-      className: 'team-worker-marker',
-      html: `<div style="padding: 5px;">${workerData.name.charAt(0)}</div>`,
-      iconSize: [30, 30]
-    });
+    const marker = createWorkerMarker(workerData, position);
+    marker.addTo(map);
 
     teamWorkers.set(workerData.workerId, {
       ...workerData,
-      marker: L.marker(position, {icon: workerMarker}).addTo(map)
-        .bindPopup(`
-          <strong>${workerData.name}</strong><br>
-          Worker ID: ${workerData.workerId}<br>
-          Last Updated: ${new Date().toLocaleTimeString()}
-        `)
+      marker: marker
     });
 
     // Store initial location
@@ -885,7 +907,7 @@ async function handleRegistration(event) {
   }
 }
 
-// Add function to periodically fetch all workers
+// Update loadAllWorkers function
 async function loadAllWorkers() {
   try {
     const response = await fetch('api/workers/get_all.php');
@@ -893,21 +915,23 @@ async function loadAllWorkers() {
 
     workers.forEach(worker => {
       if (worker.lastLocation && !teamWorkers.has(worker.workerId)) {
-        const workerMarker = L.divIcon({
-          className: 'team-worker-marker',
-          html: `<div style="padding: 5px;">${worker.name.charAt(0)}</div>`,
-          iconSize: [30, 30]
-        });
+        const marker = createWorkerMarker(
+          worker, 
+          [worker.lastLocation.lat, worker.lastLocation.lng]
+        );
+        marker.addTo(map);
 
         teamWorkers.set(worker.workerId, {
           ...worker,
-          marker: L.marker([worker.lastLocation.lat, worker.lastLocation.lng], {icon: workerMarker}).addTo(map)
-            .bindPopup(`
-              <strong>${worker.name}</strong><br>
-              Worker ID: ${worker.workerId}<br>
-              Last Updated: ${formatLastSeen(worker.timestamp)}
-            `)
+          marker: marker
         });
+      } else if (worker.lastLocation && teamWorkers.has(worker.workerId)) {
+        // Update existing marker position
+        const existingWorker = teamWorkers.get(worker.workerId);
+        existingWorker.marker.setLatLng([
+          worker.lastLocation.lat, 
+          worker.lastLocation.lng
+        ]);
       }
     });
   } catch (error) {
