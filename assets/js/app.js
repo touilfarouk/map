@@ -113,38 +113,40 @@ function initMap() {
 
     map.attributionControl.setPrefix(`<span id="status-indicator" style="color:${navigator.onLine ? "green" : "red"}">&#9673;</span>&nbsp;<span id="status-msg">${navigator.onLine ? "online" : "offline"}</span>`);
 
-    // Call loadSavedMaps directly instead
-    loadSavedMaps();
-
-    map.on("baselayerchange", (e) => {
-      localStorage.setItem("map", e.layer.options.key);
-      map.eachLayer(layer => {
-        if (layer instanceof L.GridLayer && layer != e.layer) {
-          map.removeLayer(layer);
-        }
-      });
-      if (e.layer.options.bounds) {
-        let bounds = e.layer.options.bounds;
-        map.setMaxBounds(null);
-        map.once("moveend", () => {
-          map.setMaxBounds(L.latLngBounds(bounds).pad(0.25));
-        });
-        map.fitBounds(bounds, {animate: false});
-        map.bounds = bounds;
-        controls.locateCtrl._isOutsideMapBounds = function() {
-          let llbounds = L.latLngBounds([bounds[0]], [bounds[1]]);
-          if (this._event === undefined) {
-            return false;
-          }
-          return !llbounds.contains(this._event.latlng);
-        }
-      }
-    });
-
+    // Initialize controls
     console.log("Initializing controls...");
     initControls();
 
-    console.log("Map initialization complete");
+    // Add location found event listener
+    map.on('locationfound', async function(e) {
+      if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
+        const worker = teamWorkers.get(currentWorker.workerId);
+        worker.marker.setLatLng(e.latlng);
+        worker.marker.getPopup().setContent(`
+          <strong>${worker.name}</strong><br>
+          Worker ID: ${worker.workerId}<br>
+          Last Updated: ${new Date().toLocaleTimeString()}
+        `);
+
+        // Store location update in Dexie
+        try {
+          await db.pendingUpdates.add({
+            workerId: currentWorker.workerId,
+            latitude: e.latlng.lat,
+            longitude: e.latlng.lng,
+            timestamp: Date.now(),
+            synced: 0
+          });
+
+          // Try to sync if online
+          if (navigator.onLine) {
+            syncPendingLocations();
+          }
+        } catch (error) {
+          console.error('Error storing location:', error);
+        }
+      }
+    });
 
     // Load initial workers
     loadAllWorkers();
@@ -152,6 +154,7 @@ function initMap() {
     // Refresh workers every 30 seconds
     setInterval(loadAllWorkers, 30000);
 
+    console.log("Map initialization complete");
     return true;
   } catch (error) {
     console.error("Error initializing map:", error);
@@ -768,36 +771,63 @@ async function handleRegistration(event) {
   };
 
   try {
-    // Register worker with API
-    const response = await fetch('api/workers/create.php', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(workerData)
+    // Start location tracking first
+    if (!controls.locateCtrl._active) {
+      controls.locateCtrl.start();
+    }
+
+    let position;
+    try {
+      // Wait for location with timeout
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          resolve(map.getCenter()); // Fallback to map center
+        }, 3000);
+
+        map.once('locationfound', (e) => {
+          clearTimeout(timeout);
+          position = e.latlng;
+          resolve(position);
+        });
+      });
+    } catch (error) {
+      position = map.getCenter(); // Fallback to map center
+    }
+
+    // Store worker in IndexedDB first
+    await db.workers.put({
+      ...workerData,
+      lastLocation: position
     });
 
-    if (!response.ok) throw new Error('Registration failed');
+    // Try to register with API if online
+    if (navigator.onLine) {
+      try {
+        const response = await fetch('api/workers/create.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(workerData)
+        });
 
-    // Store worker data in memory
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.message || 'Registration failed');
+        }
+      } catch (error) {
+        console.warn('API registration failed, will sync later:', error);
+      }
+    }
+
+    // Continue with local operations
     currentWorker = workerData;
     
-    // Create a marker for the worker
     const workerMarker = L.divIcon({
       className: 'team-worker-marker',
       html: `<div style="padding: 5px;">${workerData.name.charAt(0)}</div>`,
       iconSize: [30, 30]
     });
-
-    // Start location tracking if not already active
-    if (!controls.locateCtrl._active) {
-      controls.locateCtrl.start();
-    }
-
-    // Add worker to the map using current map center if location not available
-    const position = controls.locateCtrl._active ? 
-      controls.locateCtrl._marker.getLatLng() : 
-      map.getCenter();
 
     teamWorkers.set(workerData.workerId, {
       ...workerData,
@@ -809,17 +839,13 @@ async function handleRegistration(event) {
         `)
     });
 
-    // Update location in API
-    await fetch('api/locations/update.php', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        workerId: workerData.workerId,
-        latitude: position.lat,
-        longitude: position.lng
-      })
+    // Store initial location
+    await db.pendingUpdates.add({
+      workerId: workerData.workerId,
+      latitude: position.lat,
+      longitude: position.lng,
+      timestamp: Date.now(),
+      synced: 0
     });
 
     closeRegistrationForm();
@@ -833,7 +859,6 @@ async function handleRegistration(event) {
       showConfirmButton: false
     });
 
-    // Open the worker's popup
     const worker = teamWorkers.get(workerData.workerId);
     if (worker && worker.marker) {
       worker.marker.openPopup();
@@ -843,7 +868,7 @@ async function handleRegistration(event) {
     console.error('Error registering worker:', error);
     Swal.fire({
       icon: "error",
-      text: "Error registering worker. Please try again.",
+      text: error.message || "Error registering worker. Please try again.",
       toast: true,
       timer: 3000,
       position: "top-end",
@@ -917,37 +942,6 @@ async function syncPendingLocations() {
     console.error('Error in sync process:', error);
   }
 }
-
-// Update the location tracking function
-map.on('locationfound', async function(e) {
-  if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
-    const worker = teamWorkers.get(currentWorker.workerId);
-    worker.marker.setLatLng(e.latlng);
-    worker.marker.getPopup().setContent(`
-      <strong>${worker.name}</strong><br>
-      Worker ID: ${worker.workerId}<br>
-      Last Updated: ${new Date().toLocaleTimeString()}
-    `);
-
-    // Store location update in Dexie
-    try {
-      await db.pendingUpdates.add({
-        workerId: currentWorker.workerId,
-        latitude: e.latlng.lat,
-        longitude: e.latlng.lng,
-        timestamp: Date.now(),
-        synced: 0
-      });
-
-      // Try to sync if online
-      if (navigator.onLine) {
-        syncPendingLocations();
-      }
-    } catch (error) {
-      console.error('Error storing location:', error);
-    }
-  }
-});
 
 // Add background sync using Service Worker
 async function registerBackgroundSync() {
