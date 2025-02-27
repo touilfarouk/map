@@ -13,6 +13,14 @@ const controls = {}; // Add global controls object
 const teamWorkers = new Map(); // Store worker info and markers
 let currentWorker = null; // Store current worker's info
 
+// Add after your other global variables
+const db = new Dexie('TeamWorkersDB');
+
+// Define database
+db.version(1).stores({
+  workers: '++id, workerId, name, email, timestamp, lastLocation'
+});
+
 // Define controls first
 // Add file control
 L.Control.AddFile = L.Control.extend({
@@ -98,9 +106,9 @@ function initMap() {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
-    // Set initial view if no saved position
-    map.setView([0, 0], 2);
-    console.log("Initial view set");
+    // Set initial view to Algeria (centered on Algiers) with zoom level 12
+    const algiersCoords = [36.7538, 3.0588];
+    map.setView(algiersCoords, 12);
 
     map.attributionControl.setPrefix(`<span id="status-indicator" style="color:${navigator.onLine ? "green" : "red"}">&#9673;</span>&nbsp;<span id="status-msg">${navigator.onLine ? "online" : "offline"}</span>`);
 
@@ -135,7 +143,6 @@ function initMap() {
     console.log("Initializing controls...");
     initControls();
 
-    map.fitWorld();
     console.log("Map initialization complete");
     return true;
   } catch (error) {
@@ -247,10 +254,29 @@ function initControls() {
   };
 
   controls.registerCtrl.addTo(map);
+
+  // Add this to your controls in initControls()
+  controls.teamListCtrl = L.control({
+    position: "topleft"
+  });
+
+  controls.teamListCtrl.onAdd = function(map) {
+    const div = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+    div.innerHTML = `
+      <a class="leaflet-bar-part leaflet-bar-part-single" title="View Team Members" onclick="showTeamList()">
+        <i class="icon-people"></i>
+      </a>
+    `;
+    return div;
+  };
+
+  controls.teamListCtrl.addTo(map);
 }
 
-// Initialize map immediately when script loads, don't wait for DOMContentLoaded
-initMap();
+// Initialize map when window loads
+window.addEventListener('load', () => {
+  initMap();
+});
 
 function switchBaseLayer(name) {
   let basemaps = Object.keys(layers);
@@ -674,7 +700,56 @@ function closeRegistrationForm() {
   document.getElementById("registration-modal").style.display = "none";
 }
 
-function handleRegistration(event) {
+// Add these functions for team list management
+async function showTeamList() {
+  const workers = await db.workers.toArray();
+  
+  const workersList = workers.map(worker => `
+    <div class="team-member">
+      <div class="team-member-info">
+        <strong>${worker.name}</strong> (${worker.workerId})<br>
+        <small>${worker.email}</small><br>
+        <small>Last seen: ${formatLastSeen(worker.timestamp)}</small>
+      </div>
+      <button onclick="locateWorker('${worker.workerId}')" class="locate-btn">
+        <i class="icon-gps_fixed"></i>
+      </button>
+    </div>
+  `).join('');
+
+  Swal.fire({
+    title: 'Team Members',
+    html: `
+      <div class="team-list">
+        ${workersList || '<p>No team members registered</p>'}
+      </div>
+    `,
+    showCloseButton: true,
+    showConfirmButton: false,
+    width: '300px'
+  });
+}
+
+function formatLastSeen(timestamp) {
+  const now = Date.now();
+  const diff = now - timestamp;
+  
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return `${Math.floor(diff/60000)} minutes ago`;
+  if (diff < 86400000) return `${Math.floor(diff/3600000)} hours ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function locateWorker(workerId) {
+  const worker = teamWorkers.get(workerId);
+  if (worker && worker.marker) {
+    map.flyTo(worker.marker.getLatLng(), 16);
+    worker.marker.openPopup();
+  }
+}
+
+// Update handleRegistration function
+async function handleRegistration(event) {
   event.preventDefault();
   
   const workerData = {
@@ -684,55 +759,137 @@ function handleRegistration(event) {
     timestamp: Date.now()
   };
 
-  // Store worker data
-  currentWorker = workerData;
-  
-  // Create a marker for the worker
-  const workerMarker = L.divIcon({
-    className: 'team-worker-marker',
-    html: `<div style="padding: 5px;">${workerData.name.charAt(0)}</div>`,
-    iconSize: [30, 30]
-  });
+  try {
+    // Store in IndexedDB
+    await db.workers.put({
+      ...workerData,
+      lastLocation: null
+    });
 
-  // Add worker to the map if location is available
-  if (controls.locateCtrl._active) {
-    const pos = controls.locateCtrl._marker.getLatLng();
+    // Store worker data in memory
+    currentWorker = workerData;
+    
+    // Create a marker for the worker
+    const workerMarker = L.divIcon({
+      className: 'team-worker-marker',
+      html: `<div style="padding: 5px;">${workerData.name.charAt(0)}</div>`,
+      iconSize: [30, 30]
+    });
+
+    // Start location tracking if not already active
+    if (!controls.locateCtrl._active) {
+      controls.locateCtrl.start();
+    }
+
+    // Add worker to the map using current map center if location not available
+    const position = controls.locateCtrl._active ? 
+      controls.locateCtrl._marker.getLatLng() : 
+      map.getCenter();
+
     teamWorkers.set(workerData.workerId, {
       ...workerData,
-      marker: L.marker(pos, {icon: workerMarker}).addTo(map)
+      marker: L.marker(position, {icon: workerMarker}).addTo(map)
         .bindPopup(`
           <strong>${workerData.name}</strong><br>
           Worker ID: ${workerData.workerId}<br>
           Last Updated: ${new Date().toLocaleTimeString()}
         `)
     });
-  }
 
-  // Update worker position when location changes
-  map.on('locationfound', function(e) {
-    if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
-      const worker = teamWorkers.get(currentWorker.workerId);
-      worker.marker.setLatLng(e.latlng);
-      worker.marker.getPopup().setContent(`
-        <strong>${worker.name}</strong><br>
-        Worker ID: ${worker.workerId}<br>
-        Last Updated: ${new Date().toLocaleTimeString()}
-      `);
+    // Update location in database
+    await db.workers.where('workerId').equals(workerData.workerId).modify({
+      lastLocation: position,
+      timestamp: Date.now()
+    });
+
+    // Update worker position when location changes
+    map.on('locationfound', async function(e) {
+      if (currentWorker && teamWorkers.has(currentWorker.workerId)) {
+        const worker = teamWorkers.get(currentWorker.workerId);
+        worker.marker.setLatLng(e.latlng);
+        worker.marker.getPopup().setContent(`
+          <strong>${worker.name}</strong><br>
+          Worker ID: ${worker.workerId}<br>
+          Last Updated: ${new Date().toLocaleTimeString()}
+        `);
+
+        // Update location in database
+        await db.workers.where('workerId').equals(currentWorker.workerId).modify({
+          lastLocation: e.latlng,
+          timestamp: Date.now()
+        });
+      }
+    });
+
+    closeRegistrationForm();
+    
+    // Show success message
+    await Swal.fire({
+      icon: "success",
+      text: "Successfully registered as team worker!",
+      toast: true,
+      timer: 1500,
+      position: "top-end",
+      showConfirmButton: false
+    });
+
+    // Open the worker's popup
+    const worker = teamWorkers.get(workerData.workerId);
+    if (worker && worker.marker) {
+      worker.marker.openPopup();
     }
-  });
 
-  closeRegistrationForm();
-  Swal.fire({
-    icon: "success",
-    text: "Successfully registered as team worker!",
-    toast: true,
-    timer: 3000,
-    position: "top-end",
-    showConfirmButton: false
-  });
+  } catch (error) {
+    console.error('Error registering worker:', error);
+    Swal.fire({
+      icon: "error",
+      text: "Error registering worker. Please try again.",
+      toast: true,
+      timer: 3000,
+      position: "top-end",
+      showConfirmButton: false
+    });
+  }
 }
 
+// Add function to load saved workers on startup
+async function loadSavedWorkers() {
+  try {
+    const workers = await db.workers.toArray();
+    workers.forEach(worker => {
+      if (worker.lastLocation) {
+        const workerMarker = L.divIcon({
+          className: 'team-worker-marker',
+          html: `<div style="padding: 5px;">${worker.name.charAt(0)}</div>`,
+          iconSize: [30, 30]
+        });
+
+        teamWorkers.set(worker.workerId, {
+          ...worker,
+          marker: L.marker([worker.lastLocation.lat, worker.lastLocation.lng], {icon: workerMarker}).addTo(map)
+            .bindPopup(`
+              <strong>${worker.name}</strong><br>
+              Worker ID: ${worker.workerId}<br>
+              Last Updated: ${formatLastSeen(worker.timestamp)}
+            `)
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error loading saved workers:', error);
+  }
+}
+
+// Add this to your initMap function after map initialization
+loadSavedWorkers();
+
 // Add event listener for form submission
-document.addEventListener('DOMContentLoaded', function() {
-  document.getElementById('registration-form').addEventListener('submit', handleRegistration);
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('registration-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      handleRegistration(e);
+    });
+  }
 });

@@ -88,6 +88,39 @@
         color: white;
         font-weight: bold;
       }
+      
+      .team-list {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      
+      .team-member {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+      }
+      
+      .team-member:last-child {
+        border-bottom: none;
+      }
+      
+      .team-member-info {
+        flex: 1;
+      }
+      
+      .locate-btn {
+        background: none;
+        border: none;
+        color: #3388ff;
+        cursor: pointer;
+        padding: 5px;
+      }
+      
+      .locate-btn:hover {
+        color: #286090;
+      }
     </style>
   </head>
   <body>
@@ -98,7 +131,7 @@
       <div id="registration-modal" class="modal" style="display: none;">
         <div class="modal-content">
           <h2>Team Worker Registration</h2>
-          <form id="registration-form">
+          <form id="registration-form" onsubmit="event.preventDefault(); handleRegistration(event);">
             <input type="text" id="worker-name" placeholder="Full Name" required>
             <input type="email" id="worker-email" placeholder="Email" required>
             <input type="text" id="worker-id" placeholder="Worker ID" required>
@@ -119,6 +152,7 @@
     <script src="assets/vendor/leaflet-locatecontrol-0.83.1/L.Control.Locate.min.js"></script>
     <script src="assets/vendor/pmtiles-4.3.0/pmtiles.js"></script>
     <script src="assets/vendor/sweetalert2-11.16.1/sweetalert2.all.min.js"></script>
+    <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
     <script src="assets/js/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
