@@ -31,8 +31,8 @@ L.Control.AddFile = L.Control.extend({
     
     const div = L.DomUtil.create("div", "leaflet-bar leaflet-control");
     div.innerHTML = `
-      <a class="leaflet-bar-part leaflet-bar-part-single file-control-btn" style="height: 40px; width: 40px; line-height: 40px;" title="App Info" onclick="showInfo();">
-        <i class="icon-info_outline"></i>
+      <a class="leaflet-bar-part leaflet-bar-part-single file-control-btn" style="height: 40px; width: 40px; line-height: 40px;" title="Import Map" onclick="fileInput.click();">
+        <i class="icon-file_upload"></i>
       </a>
     `;
     L.DomEvent.on(div, "click", (e) => {
@@ -359,7 +359,7 @@ function handleURLparams(keys) {
     if (localStorage.getItem("map")) {
       switchBaseLayer(localStorage.getItem("map"));
     } else {
-      showInfo();
+      // showInfo();
     }
   }
 }
@@ -501,7 +501,7 @@ function handleFile(file) {
   } else {
     Swal.fire({
       icon: "warning",
-      html: "Only <i>.pmtiles</i> and <i>.geojson</i> files are currently supported!",
+      text: "Only .pmtiles and .geojson files are supported!",
       toast: true,
       timer: 2500,
       position: "center",
@@ -621,48 +621,6 @@ function showLoader() {
 function hideLoader() {
   const progressBar = document.getElementById("progress-bar");
   if (progressBar) progressBar.style.display = "none";
-}
-
-function showInfo() {
-  Swal.fire({
-    customClass: {
-      icon: "info-icon",
-      title: "info-title"
-    },
-    iconHtml: "<img src='assets/img/87.png'>",
-    title: "gpsmap.app",
-    html: `A simple, offline capable map viewer with GPS integration. Import a raster <a href='https://docs.protomaps.com/pmtiles/create#geotiff' target='_blank'>PMTiles</a> file directly from your device or link to a hosted file using the URL map parameter.<p>Version: <b>${app.version}</b><br><a href='javascript: showCredits();'>Open Source Credits</a></p>`,
-    showCloseButton: true,
-    showConfirmButton: true,
-    confirmButtonText: "Import Map",
-    confirmButtonColor: "#3085d6",
-    cancelButtonText: "Learn More",
-    showCancelButton: true,
-    reverseButtons: true,
-    footer: `<span style='font-size:smaller;'><i>Maps made available through this app are provided for informational and planning purposes only. Not responsible for the misuse or misrepresentation of any maps or this app.</i></span>`
-  }).then((result) => {
-    if (result.isConfirmed) {
-      fileInput.click();
-    } else if (result.dismiss === Swal.DismissReason.cancel) {
-      window.open("https://github.com/bmcbride/gps-map", "_blank");
-    }
-  });
-}
-
-function showCredits() {
-  Swal.fire({
-    showCloseButton: true,
-    showConfirmButton: false,
-    title: "Open Source Credits",
-    html: `<a href='https://leafletjs.com/' target='_blank'>Leaflet JS</a><br>
-          <a href='https://github.com/domoritz/leaflet-locatecontrol' target='_blank'>Leaflet Locate</a><br>
-          <a href='https://docs.protomaps.com/pmtiles/' target='_blank'>Protomaps PMTiles</a><br>
-          <a href='https://localforage.github.io/localForage/' target='_blank'>localForage</a><br>
-          <a href='https://github.com/GoogleChrome/workbox/' target='_blank'>Workbox</a><br>
-          <a href='https://sweetalert2.github.io/' target='_blank'>sweetalert2</a><br>
-          <a href='https://icomoon.io/' target='_blank'>IcoMoon Icons</a><br>
-          <a href='https://www.flaticon.com/free-icons/route' title="route icons">Route icons created by redempticon - Flaticon</a>`
-  });
 }
 
 function formatSize(bytes) {
